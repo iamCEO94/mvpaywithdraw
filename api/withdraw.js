@@ -5,20 +5,11 @@ import admin from "firebase-admin";
 // Enable CORS
 const cors = Cors({ origin: "*", methods: ["POST", "OPTIONS"] });
 
-// Initialize Firebase Admin
+// Initialize Firebase Admin with single service key variable
 if (!admin.apps.length) {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   admin.initializeApp({
-    credential: admin.credential.cert({
-      type: process.env.FIREBASE_TYPE,
-      project_id: process.env.FIREBASE_PROJECT_ID,
-      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-      client_email: process.env.FIREBASE_CLIENT_EMAIL,
-      client_id: process.env.FIREBASE_CLIENT_ID,
-      auth_uri: process.env.FIREBASE_AUTH_URI,
-      token_uri: process.env.FIREBASE_TOKEN_URI,
-      auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER,
-      client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
-    }),
+    credential: admin.credential.cert(serviceAccount),
   });
 }
 
@@ -35,7 +26,6 @@ export default function handler(req, res) {
     }
 
     try {
-      // Fetch user from Firestore
       const userRef = db.collection("users").doc(uid);
       const userSnap = await userRef.get();
       if (!userSnap.exists) return res.status(404).json({ success: false, message: "User not found" });
@@ -43,7 +33,6 @@ export default function handler(req, res) {
       const userData = userSnap.data();
       if (userData.balance < amount) return res.status(400).json({ success: false, message: "Insufficient balance" });
 
-      // Initiate Paystack transfer
       const transferRes = await fetch("https://api.paystack.co/transfer", {
         method: "POST",
         headers: {
@@ -53,8 +42,8 @@ export default function handler(req, res) {
         body: JSON.stringify({
           source: "balance",
           reason: "User Withdrawal",
-          amount: amount * 100, // Paystack in kobo
-          recipient: accountNumber, // assuming recipient code or account number
+          amount: amount * 100,
+          recipient: accountNumber,
           currency: "NGN",
         }),
       });
@@ -62,7 +51,6 @@ export default function handler(req, res) {
       const transferData = await transferRes.json();
       if (!transferData.status) return res.status(400).json({ success: false, message: transferData.message });
 
-      // Deduct from user's balance
       await userRef.update({
         balance: admin.firestore.FieldValue.increment(-amount),
         totalWithdraw: admin.firestore.FieldValue.increment(amount),

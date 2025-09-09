@@ -1,65 +1,69 @@
-import Cors from "cors";
+// api/withdraw.js
 import fetch from "node-fetch";
-import admin from "firebase-admin";
 
-// Enable CORS
-const cors = Cors({ origin: "*", methods: ["POST", "OPTIONS"] });
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
-// Initialize Firebase Admin with single service key variable
-if (!admin.apps.length) {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
-}
+  try {
+    const { bank_code, account_number, amount, reason } = req.body;
 
-const db = admin.firestore();
-
-export default function handler(req, res) {
-  return cors(req, res, async () => {
-    if (req.method !== "POST") return res.status(405).json({ success: false, message: "Method not allowed" });
-
-    const { uid, amount, bankName, accountNumber } = req.body;
-
-    if (!uid || !amount || !bankName || !accountNumber) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
+    if (!bank_code || !account_number || !amount) {
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    try {
-      const userRef = db.collection("users").doc(uid);
-      const userSnap = await userRef.get();
-      if (!userSnap.exists) return res.status(404).json({ success: false, message: "User not found" });
+    // 1️⃣ Create recipient on Paystack
+    const recipientResponse = await fetch("https://api.paystack.co/transferrecipient", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "nuban",
+        name: "Withdrawal User",
+        account_number,
+        bank_code,
+        currency: "NGN",
+      }),
+    });
 
-      const userData = userSnap.data();
-      if (userData.balance < amount) return res.status(400).json({ success: false, message: "Insufficient balance" });
-
-      const transferRes = await fetch("https://api.paystack.co/transfer", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          source: "balance",
-          reason: "User Withdrawal",
-          amount: amount * 100,
-          recipient: accountNumber,
-          currency: "NGN",
-        }),
-      });
-
-      const transferData = await transferRes.json();
-      if (!transferData.status) return res.status(400).json({ success: false, message: transferData.message });
-
-      await userRef.update({
-        balance: admin.firestore.FieldValue.increment(-amount),
-        totalWithdraw: admin.firestore.FieldValue.increment(amount),
-      });
-
-      return res.json({ success: true, message: "Withdrawal initiated successfully" });
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ success: false, message: "Server error" });
+    const recipientData = await recipientResponse.json();
+    if (!recipientData.status) {
+      return res.status(400).json({ error: "Failed to create recipient", details: recipientData });
     }
-  });
+
+    const recipientCode = recipientData.data.recipient_code;
+
+    // 2️⃣ Initiate transfer
+    const transferResponse = await fetch("https://api.paystack.co/transfer", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        source: "balance",
+        amount: amount * 100, // Paystack expects kobo
+        recipient: recipientCode,
+        reason: reason || "Withdrawal from MVPay",
+      }),
+    });
+
+    const transferData = await transferResponse.json();
+
+    if (!transferData.status) {
+      return res.status(400).json({ error: "Transfer failed", details: transferData });
+    }
+
+    return res.status(200).json({
+      message: "Withdrawal initiated successfully",
+      data: transferData.data,
+    });
+
+  } catch (err) {
+    console.error("Withdraw error:", err);
+    return res.status(500).json({ error: "MVPay withdrawal server error. Try again later." });
+  }
 }

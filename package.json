@@ -2,11 +2,7 @@
   "name": "mvpaywithdraw",
   "version": "1.0.0",
   "description": "Withdrawal backend for MVPay using Paystack",
-  "main": "index.js",
   "type": "module",
-  "scripts": {
-    "start": "node api/withdraw.js"
-  },
   "dependencies": {
     "node-fetch": "^3.3.2"
   }

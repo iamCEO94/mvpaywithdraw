@@ -2,64 +2,76 @@
 import fetch from "node-fetch";
 
 export default async function handler(req, res) {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
-    return res.status(405).json({ success: false, message: "Method not allowed" });
-  }
-
-  const { uid, bankCode, accountNumber, amount } = req.body;
-  if (!uid || !bankCode || !accountNumber || !amount) {
-    return res.status(400).json({ success: false, message: "Missing required fields" });
-  }
-
-  if (!process.env.PAYSTACK_SECRET_KEY) {
-    return res.status(500).json({ success: false, message: "Missing Paystack secret key" });
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    // Create recipient
-    const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
+    const { account_number, bank_code, amount } = req.body;
+
+    if (!account_number || !bank_code || !amount) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Step 1: Create transfer recipient
+    const recipientResp = await fetch("https://api.paystack.co/transferrecipient", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         type: "nuban",
-        name: `User-${uid}`,
-        account_number: accountNumber,
-        bank_code: bankCode,
-        currency: "NGN"
-      })
+        name: "MVPay User",
+        account_number,
+        bank_code,
+        currency: "NGN",
+      }),
     });
-    const recipientData = await recipientRes.json();
-    if (!recipientData.status) {
-      return res.status(400).json({ success: false, message: "Failed to create recipient", details: recipientData });
-    }
-    const recipient_code = recipientData.data.recipient_code;
 
-    // Initiate transfer
-    const transferRes = await fetch("https://api.paystack.co/transfer", {
+    const recipientData = await recipientResp.json();
+
+    if (!recipientData.status) {
+      return res.status(400).json({ error: recipientData.message });
+    }
+
+    const recipientCode = recipientData.data.recipient_code;
+
+    // Step 2: Initiate transfer
+    const transferResp = await fetch("https://api.paystack.co/transfer", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         source: "balance",
-        amount: amount * 100,
-        recipient: recipient_code,
-        reason: "MVPay Wallet Withdrawal"
-      })
+        amount: amount * 100, // Paystack expects kobo
+        recipient: recipientCode,
+        reason: "MVPay withdrawal",
+      }),
     });
-    const transferData = await transferRes.json();
+
+    const transferData = await transferResp.json();
+
     if (!transferData.status) {
-      return res.status(400).json({ success: false, message: "Transfer failed", details: transferData });
+      return res.status(400).json({ error: transferData.message });
     }
 
-    return res.status(200).json({ success: true, message: "Withdrawal successful", data: transferData.data });
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.status(200).json({ message: "Withdrawal successful", data: transferData.data });
 
-  } catch (error) {
-    console.error("Withdrawal error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+  } catch (err) {
+    console.error(err);
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.status(500).json({ error: "Withdrawal failed. Please try again later." });
   }
 }

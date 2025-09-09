@@ -4,12 +4,13 @@ const paystack = require('paystack-api')('YOUR_PAYSTACK_SECRET_KEY');
 // This is the main handler for the Vercel serverless function.
 module.exports = async (req, res) => {
     // Set the response headers to allow CORS (Cross-Origin Resource Sharing)
-    // This is important so your frontend can communicate with this backend.
+    // This is CRITICAL for your frontend to communicate with this backend.
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     // Handle the OPTIONS pre-flight request from the browser
+    // This is part of the CORS protocol.
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
@@ -17,7 +18,6 @@ module.exports = async (req, res) => {
     try {
         // Correctly read the JSON body from the request.
         // It is crucial to use `req.body` and to de-structure the variables.
-        // This is the likely source of the "bank_code is required" error.
         const { account_number, bank_code, amount } = req.body;
 
         // Check for missing fields as a safety measure
@@ -47,7 +47,6 @@ module.exports = async (req, res) => {
 
     } catch (error) {
         // If there's any error during the process, catch it and send it to the frontend for debugging.
-        // This is how you're seeing the "bank_code is required" error.
         console.error('API Error:', error);
         res.status(500).json({ success: false, message: "Internal Server Error", error: error.message });
     }
